@@ -58,9 +58,9 @@ The investigation was performed by gradually narrowing down CloudTrail events.
 
 Query:
 
-CODE_BLOCK_START
+```
 event.dataset: aws.cloudtrail
-CODE_BLOCK_END
+```
 
 Purpose:
 
@@ -77,9 +77,9 @@ CloudTrail logs contain records of AWS API activity, including authentication an
 
 Query:
 
-CODE_BLOCK_START
+```
 event.dataset: aws.cloudtrail and aws.cloudtrail.user_identity.type: IAMUser
-CODE_BLOCK_END
+```
 
 Purpose:
 
@@ -96,9 +96,9 @@ IAM users represent identities that can authenticate and perform actions inside 
 
 Query:
 
-CODE_BLOCK_START
+```
 event.dataset: aws.cloudtrail and aws.cloudtrail.user_identity.type: IAMUser and event.outcome: "failure"
-CODE_BLOCK_END
+```
 
 Purpose:
 
@@ -115,9 +115,9 @@ Multiple failed authentication events may indicate brute-force attempts or unaut
 
 Query:
 
-CODE_BLOCK_START
+```
 event.dataset: aws.cloudtrail and aws.cloudtrail.user_identity.type: IAMUser and event.outcome: "failure" and event.action: "ConsoleLogin"
-CODE_BLOCK_END
+```
 
 Purpose:
 
@@ -136,16 +136,16 @@ The search returned 34 records.
 
 All identified events contained:
 
-CODE_BLOCK_START
+```
 ConsoleLogin=Failure
-CODE_BLOCK_END
+```
 
 
 The failed login count associated with the identified failed event:
 
-CODE_BLOCK_START
+```
 34
-CODE_BLOCK_END
+```
 
 
 ---
