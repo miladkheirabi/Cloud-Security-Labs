@@ -4,23 +4,16 @@
 Cloud-Security-Labs/
 
 ├── AWS/
-│   ├── CloudTrail/
-│   ├── IAM/
-│   ├── S3/
-│   └── EC2/
+│   ├── Red-Team/
+│   └── Blue-Team/
 │
 ├── GCP/
-│   ├── Cloud-Audit-Logs/
-│   ├── IAM/
-│   ├── Storage/
-│   └── VPC/
+│   ├── Red-Team/
+│   └── Blue-Team/
 │
 ├── Azure/
-│
-├── Notes/
-│   ├── AWS-CloudTrail-Queries.md
-│   ├── GCP-Audit-Logs-Queries.md
-│   └── Cloud-Security-Concepts.md
+│   ├── Red-Team/
+│   └── Blue-Team/
 │
 └── Templates/
     └── challenge-template.md
