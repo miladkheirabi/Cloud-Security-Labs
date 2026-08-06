@@ -58,17 +58,16 @@ Client Secret
 
 The tenant ID can be obtained from the organization's domain information.
 
-Example:
+Request:
 
 ```
-secure-corp.org
+https://login.microsoftonline.com/<DOMAIN>/.well-known/openid-configuration
 ```
 
-Result:
+Response:
 
 ```
-Tenant ID:
-f2a33211-e46a-4c92-b84d-aff06c2cd13f
+{"token_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/oauth2/token","token_endpoint_auth_methods_supported":["client_secret_post","private_key_jwt","client_secret_basic"],"jwks_uri":"https://login.microsoftonline.com/common/discovery/keys","response_modes_supported":["query","fragment","form_post"],"subject_types_supported":["pairwise"],"id_token_signing_alg_values_supported":["RS256"],"response_types_supported":["code","id_token","code id_token","token id_token","token"],"scopes_supported":["openid"],"issuer":"https://sts.windows.net/f2a33211-e46a-4c92-b84d-aff06c2cd13f/","microsoft_multi_refresh_token":true,"authorization_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/oauth2/authorize","device_authorization_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/oauth2/devicecode","http_logout_supported":true,"frontchannel_logout_supported":true,"end_session_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/oauth2/logout","claims_supported":["sub","iss","cloud_instance_name","cloud_instance_host_name","cloud_graph_host_name","msgraph_host","aud","exp","iat","auth_time","acr","amr","nonce","email","given_name","family_name","nickname"],"check_session_iframe":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/oauth2/checksession","userinfo_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/openid/userinfo","kerberos_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/kerberos","tenant_region_scope":"AS","cloud_instance_name":"microsoftonline.com","cloud_graph_host_name":"graph.windows.net","msgraph_host":"graph.microsoft.com","rbac_url":"https://pas.windows.net"}
 ```
 
 ---
@@ -116,72 +115,6 @@ The `roles` claim reveals the granted Application Permission.
 
 ---
 
-# Step 4 - Enumerate Service Principal
-
-Find the Service Principal associated with the application.
-
-Request:
-
-```bash
-curl -X GET "https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq 'APPLICATION_ID'" -H "Authorization: Bearer ACCESS_TOKEN"
-```
-
-Result:
-
-```json
-{
-  "id": "d6bc58ed-11f6-47cd-a168-e4d606c5b22a",
-  "displayName": "dev-app",
-  "appId": "caaa28c5-b8da-4d29-b42e-95b1aba6b81c"
-}
-```
-
----
-
-# Step 5 - Enumerate App Role Assignments
-
-Query the assigned API permissions:
-
-```bash
-curl -X GET https://graph.microsoft.com/v1.0/servicePrincipals/SERVICE_PRINCIPAL_ID/appRoleAssignments -H "Authorization: Bearer ACCESS_TOKEN"
-```
-
-Output:
-
-```json
-{
-  "value": [
-    {
-      "appRoleId": "9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30",
-      "resourceDisplayName": "Microsoft Graph",
-      "principalDisplayName": "dev-app"
-    }
-  ]
-}
-```
-
-The application has a Microsoft Graph Application Permission assigned.
-
----
-
-# Step 6 - Resolve API Permission Name
-
-Find the matching permission from Microsoft Graph service principal roles.
-
-The identified role ID:
-
-```
-9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30
-```
-
-maps to:
-
-```
-Application.Read.All
-```
-
----
-
 # Flag
 
 ```
@@ -200,15 +133,6 @@ Discover Tenant ID
           |
           v
 Request OAuth Token
-          |
-          v
-Microsoft Graph API Access
-          |
-          v
-Enumerate Service Principal
-          |
-          v
-Check App Role Assignments
           |
           v
 Identify API Permission
