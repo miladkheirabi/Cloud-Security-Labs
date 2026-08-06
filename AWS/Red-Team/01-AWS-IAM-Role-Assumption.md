@@ -217,7 +217,7 @@ aws s3 ls s3://securecorpbakstoragebuk/ --recursive --profile Role
 The flag file was discovered:
 
 ```text
-docs/Flag.txt
+Flag.txt
 ```
 
 The object was downloaded:
@@ -225,7 +225,7 @@ The object was downloaded:
 ```bash
 aws s3api get-object \
 --bucket securecorpbakstoragebuk \
---key docs/Flag.txt \
+--key Flag.txt \
 flag.txt \
 --profile Role
 ```
