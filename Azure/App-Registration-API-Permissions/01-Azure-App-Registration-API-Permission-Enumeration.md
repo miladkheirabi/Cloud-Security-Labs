@@ -66,7 +66,7 @@ https://login.microsoftonline.com/<DOMAIN>/.well-known/openid-configuration
 
 Response:
 
-```
+```json
 {
   "token_endpoint":"https://login.microsoftonline.com/f2a33211-e46a-4c92-b84d-aff06c2cd13f/oauth2/token",
   "token_endpoint_auth_methods_supported":["client_secret_post","private_key_jwt","client_secret_basic"],
@@ -89,7 +89,8 @@ Response:
   "cloud_instance_name":"microsoftonline.com",
   "cloud_graph_host_name":"graph.windows.net",
   "msgraph_host":"graph.microsoft.com",
-  "rbac_url":"https://pas.windows.net"}
+  "rbac_url":"https://pas.windows.net"
+}
 ```
 
 ---
