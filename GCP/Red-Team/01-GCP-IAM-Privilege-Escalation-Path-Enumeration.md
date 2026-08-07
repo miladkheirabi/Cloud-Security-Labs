@@ -1,24 +1,24 @@
-# GCP IAM Privilege Escalation Path Enumeration
+# GCP IAM Enumeration & Privilege Escalation Discovery
 
 ## Challenge Overview
 
 ### Objective
 
-Identify the privilege escalation path within a Google Cloud Platform (GCP) environment by enumerating IAM roles, custom roles, and Service Account permissions. The objective is to determine how an attacker could move from a compromised low-privileged Service Account to a more privileged identity.
+Enumerate a Google Cloud Platform (GCP) environment using the credentials of a compromised Service Account, identify IAM misconfigurations, discover privilege escalation paths, and retrieve the information required to construct the challenge flag.
 
 ### Scenario
 
-An attacker obtains the JSON key of a compromised Service Account (`testing-service-account`) inside a GCP project. The task is to enumerate the cloud environment, inspect IAM configurations, identify custom roles, and discover Service Accounts that possess administrative permissions over other identities.
-
-Although no actual privilege escalation is performed during the challenge, the objective is to identify the attack path that would enable one.
+As a member of Secure Corp's Red Team, we are provided with the credentials of a low-privileged Service Account. The objective is not to immediately compromise cloud resources, but to understand the IAM architecture, enumerate custom roles, discover resource-level permissions, identify privilege escalation opportunities, and determine which identities possess administrative control over other Service Accounts.
 
 ### Skills Practiced
 
 - GCP IAM Enumeration
-- Service Account Analysis
-- Custom Role Enumeration
+- Service Account Enumeration
 - IAM Policy Analysis
+- Custom Role Enumeration
+- Bucket Permission Analysis
 - Privilege Escalation Path Discovery
+- Cloud CLI Usage
 
 ---
 
@@ -30,19 +30,22 @@ Google Cloud Platform (GCP)
 
 ## Initial Access
 
-A leaked Service Account JSON key:
+A Service Account private key was provided in JSON format.
 
-- Service Account Private Key
-- Client Email
-- Project ID
+The first step was authenticating with GCP using the provided credentials.
 
-This allowed authentication using Google Cloud SDK.
+Example:
+
+```bash
+gcloud auth activate-service-account \
+    --key-file testing-srvacc-key.json
+```
 
 ## Available Tools
 
 - Google Cloud SDK (gcloud)
-- IAM API
-- Cloud Storage API
+- gsutil
+- Cloud IAM APIs
 
 ---
 
@@ -50,87 +53,81 @@ This allowed authentication using Google Cloud SDK.
 
 ## Initial Hypothesis
 
-The provided Service Account was expected to have limited permissions. The primary objective was to enumerate IAM objects and identify any relationships that could lead to privilege escalation.
+Since the challenge provides credentials for a Service Account instead of an administrator account, it is reasonable to assume that the account has limited permissions.
+
+The investigation therefore focuses on answering four questions:
+
+- Which project do these credentials belong to?
+- Which IAM roles are assigned to this Service Account?
+- Which cloud resources can it access?
+- Is there any privilege escalation path involving other Service Accounts?
 
 Expected targets:
 
-- Custom IAM Roles
+- IAM Roles
 - Service Accounts
-- IAM Bindings
-- Cloud Storage Buckets
+- Custom Roles
+- Storage Buckets
+- IAM Policies
 
 ---
 
 # Attack Workflow
 
-The attack was performed by gradually expanding knowledge of the environment and identifying privilege escalation paths.
+The attack consisted primarily of IAM enumeration rather than direct exploitation.
 
-## Step 1 - Initial Access Validation
+## Step 1 - Authenticate to GCP
 
 ### Action
 
-Authenticate using the leaked Service Account credentials and verify access.
+Authenticate using the provided Service Account key.
 
 Command:
 
 ```bash
 gcloud auth activate-service-account \
-    --key-file service-account.json
+    --key-file testing-srvacc-key.json
+```
 
+Verify authentication:
+
+```bash
 gcloud auth list
 ```
 
-Result:
+Observation:
 
-```text
-Active Account:
+The active identity became:
+
+```
 testing-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com
 ```
 
-Observation:
-
-The leaked key was valid and provided authenticated access to the target GCP project.
+This confirms successful authentication.
 
 ---
 
-## Step 2 - Enumerate IAM Configuration
+## Step 2 - Discover the Project
 
 ### Goal
 
-Discover project-level IAM bindings and determine which roles are assigned to the compromised Service Account.
+Identify the GCP project associated with the compromised credentials.
 
-Command:
-
-```bash
-gcloud projects get-iam-policy woven-acolyte-428406-v9
-```
-
-Findings:
-
-- The Service Account had several built-in viewer roles.
-- A custom role named `customViewerRole1` was assigned.
-- Multiple additional Service Accounts existed inside the project.
-
-Next, enumerate the custom role:
+Command
 
 ```bash
-gcloud iam roles describe customViewerRole1 \
-    --project woven-acolyte-428406-v9
+gcloud projects list
 ```
 
-Result:
+Result
 
-```text
-title: Custom Viewer Role1
-
-includedPermissions:
-- storage.buckets.list
-- storage.objects.get
+```
+woven-acolyte-428406-v9
 ```
 
-Observation:
+Observation
 
-The custom role only granted read-only access to Cloud Storage resources.
+This project ID is required for nearly every subsequent enumeration command.
 
 ---
 
@@ -138,120 +135,263 @@ The custom role only granted read-only access to Cloud Storage resources.
 
 ### Goal
 
-Identify high-value identities inside the project.
+Identify all Service Accounts present in the project.
 
-Command:
+Command
 
 ```bash
-gcloud iam service-accounts list
+gcloud iam service-accounts list \
+    --project woven-acolyte-428406-v9
 ```
 
-Result:
+Findings
 
-```text
-testing-service-account
-prod-service-account
-devops-service-account
-resource-mgmt
-secret-mgmt-sa
-log-reviewer-sa
-...
-```
+Several Service Accounts were discovered, including:
 
-Observation:
+- testing-service-account
+- devops-service-account
+- prod-service-account
+- resource-mgmt
+- secret-mgmt-sa
+- service-mgmt-sa
+- log-reviewer-sa
+- hd-service-account
 
-Several administrative-looking Service Accounts were present, suggesting additional privilege boundaries inside the project.
+This immediately suggests an environment where different Service Accounts manage different operational tasks.
 
 ---
 
-## Step 4 - Identify Privilege Escalation Path
+## Step 4 - Enumerate IAM Policy Bindings
 
-### Misconfiguration Identified
+### Goal
 
-Inspect the IAM policy attached directly to the DevOps Service Account.
+Identify role assignments across the entire project.
 
-Command:
+Command
+
+```bash
+gcloud projects get-iam-policy \
+    woven-acolyte-428406-v9
+```
+
+Findings
+
+The compromised Service Account possesses several roles:
+
+- roles/viewer
+- roles/iam.roleViewer
+- roles/iam.securityReviewer
+- projects/.../roles/customViewerRole1
+
+Other interesting identities were also discovered, including:
+
+- devops-service-account
+- prod-service-account
+- resource-mgmt
+
+Each with significantly different privilege levels.
+
+---
+
+## Step 5 - Enumerate Assigned Roles
+
+### Goal
+
+Determine the exact roles assigned to the compromised Service Account.
+
+Command
+
+```bash
+gcloud projects get-iam-policy \
+    woven-acolyte-428406-v9 \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:testing-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com" \
+    --format="table(bindings.role)"
+```
+
+Result
+
+```
+roles/viewer
+roles/iam.roleViewer
+roles/iam.securityReviewer
+projects/.../roles/customViewerRole1
+```
+
+Observation
+
+Although the Service Account is relatively low privileged, it possesses strong visibility into IAM resources.
+
+---
+
+## Step 6 - Enumerate Custom Roles
+
+### Goal
+
+Understand the permissions granted by the project's custom roles.
+
+List available custom roles:
+
+```bash
+gcloud iam roles list \
+    --project woven-acolyte-428406-v9
+```
+
+Describe the role:
+
+```bash
+gcloud iam roles describe \
+    customViewerRole1 \
+    --project woven-acolyte-428406-v9
+```
+
+Result
+
+```
+storage.buckets.list
+storage.objects.get
+```
+
+Observation
+
+The custom role grants read access to Cloud Storage objects.
+
+---
+
+## Step 7 - Identify Accessible Resources
+
+### Goal
+
+Determine where the custom role can actually be used.
+
+Command
+
+```bash
+gcloud storage buckets list
+```
+
+During bucket enumeration an interesting bucket appeared:
+
+```
+secret-bucket-woven-acolyte-428406-v9
+```
+
+The project IAM policy also contained the following conditional binding:
+
+```
+resource.name == "secret-bucket-woven-acolyte-428406-v9"
+```
+
+Observation
+
+Although the custom role contains only two permissions, the IAM Condition restricts those permissions to a single storage bucket.
+
+---
+
+## Step 8 - Inspect Bucket Permissions
+
+### Goal
+
+Verify access to the target bucket.
+
+Command
+
+```bash
+gcloud storage buckets get-iam-policy \
+gs://secret-bucket-woven-acolyte-428406-v9
+```
+
+The bucket policy confirms that the compromised Service Account has read access.
+
+---
+
+## Step 9 - Retrieve Bucket Contents
+
+### Goal
+
+Read accessible objects.
+
+List files
+
+```bash
+gsutil ls -r \
+gs://secret-bucket-woven-acolyte-428406-v9
+```
+
+Download file
+
+```bash
+gsutil cp \
+gs://secret-bucket-woven-acolyte-428406-v9/secret.txt .
+```
+
+Observation
+
+This demonstrates how a seemingly harmless custom role can expose sensitive information.
+
+---
+
+## Step 10 - Discover Privilege Escalation Paths
+
+### Goal
+
+Identify relationships between Service Accounts.
+
+Command
 
 ```bash
 gcloud iam service-accounts get-iam-policy \
 devops-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com
 ```
 
-Result:
+Result
 
-```yaml
-bindings:
+```
+prod-service-account
 
-- members:
-    - serviceAccount:prod-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com
-  role: roles/iam.serviceAccountAdmin
+roles/iam.serviceAccountAdmin
 
-- members:
-    - serviceAccount:prod-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com
-  role: roles/iam.serviceAccountKeyAdmin
+roles/iam.serviceAccountKeyAdmin
 ```
 
-Observation:
+Observation
 
-The `prod-service-account` possesses administrative permissions over the DevOps Service Account.
+The compromised Service Account cannot directly escalate privileges.
 
-This represents a potential privilege escalation path because an attacker who compromises the production Service Account could:
+However, IAM enumeration reveals that **prod-service-account** possesses administrative control over the **devops-service-account**.
 
-- Manage the DevOps Service Account.
-- Create or rotate Service Account keys.
-- Potentially impersonate or take control of the DevOps identity.
-
----
-
-## Step 5 - Enumerate Accessible Storage Resources
-
-### Target
-
-Cloud Storage Buckets
-
-Command:
-
-```bash
-gcloud storage buckets list
-```
-
-Result:
-
-```text
-secret-bucket-woven-acolyte-428406-v9
-production-v545965
-woven-acolyte-428406-v9_cloudbuild
-...
-```
-
-Observation:
-
-The compromised identity had read access to enumerate storage buckets, confirming the permissions granted by the custom viewer role.
+This represents the privilege escalation path intentionally hidden in the environment.
 
 ---
 
 # Attack Chain
 
 ```text
-Leaked Service Account Key
+Compromised Service Account
         |
         v
 Authenticate to GCP
         |
         v
-Enumerate IAM Policies
+Project Enumeration
         |
         v
-Identify Custom Role
+Service Account Enumeration
         |
         v
-Enumerate Service Accounts
+IAM Policy Enumeration
         |
         v
-Inspect Service Account IAM Policies
+Custom Role Enumeration
         |
         v
-Identify Privilege Escalation Relationship
+Bucket Permission Discovery
+        |
+        v
+Sensitive File Retrieval
+        |
+        v
+Privilege Escalation Path Discovery
 ```
 
 ---
@@ -260,15 +400,24 @@ Identify Privilege Escalation Relationship
 
 ## Security Weakness
 
-A privileged Service Account (`prod-service-account`) was granted administrative control over another Service Account (`devops-service-account`).
+Several IAM misconfigurations and information disclosure issues were identified.
 
-Although the initial compromised identity could not directly exploit this relationship, identifying these trust relationships is a critical step during cloud privilege escalation assessments.
+- Overly informative IAM permissions granted to a low-privileged Service Account.
+- Custom role exposing storage objects.
+- Resource-level IAM Condition protecting only a specific bucket.
+- Administrative control delegated from one Service Account to another.
 
 ## Impact
 
-If the production Service Account were compromised, an attacker could administer the DevOps Service Account, potentially creating new keys or abusing impersonation to expand access within the environment.
+An attacker with the compromised Service Account could:
 
-This demonstrates how Service Account relationships can become lateral movement opportunities even when the initially compromised identity has limited privileges.
+- Enumerate the project's IAM architecture.
+- Discover all Service Accounts.
+- Understand custom roles.
+- Read sensitive bucket contents.
+- Map privilege escalation paths for future attacks.
+
+Although immediate privilege escalation was not possible, the environment leaked valuable information for subsequent attack stages.
 
 ---
 
@@ -277,47 +426,76 @@ This demonstrates how Service Account relationships can become lateral movement 
 Important commands used during the assessment:
 
 ```bash
-gcloud auth list
+gcloud auth activate-service-account \
+--key-file testing-srvacc-key.json
 
-gcloud projects get-iam-policy woven-acolyte-428406-v9
-
-gcloud iam roles describe customViewerRole1 \
-    --project woven-acolyte-428406-v9
+gcloud projects list
 
 gcloud iam service-accounts list
 
-gcloud iam service-accounts get-iam-policy \
-devops-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com
+gcloud projects get-iam-policy woven-acolyte-428406-v9
+
+gcloud iam roles list
+
+gcloud iam roles describe customViewerRole1
 
 gcloud storage buckets list
+
+gcloud storage buckets get-iam-policy \
+gs://secret-bucket-woven-acolyte-428406-v9
+
+gsutil ls -r \
+gs://secret-bucket-woven-acolyte-428406-v9
+
+gsutil cp \
+gs://secret-bucket-woven-acolyte-428406-v9/secret.txt .
+
+gcloud iam service-accounts get-iam-policy \
+devops-service-account@woven-acolyte-428406-v9.iam.gserviceaccount.com
 ```
 
 ---
 
 # Defensive Recommendations
 
-- Apply the principle of least privilege to all Service Accounts.
-- Regularly audit Service Account IAM policies.
-- Avoid granting `roles/iam.serviceAccountAdmin` unless operationally necessary.
-- Restrict the ability to create Service Account keys.
-- Periodically review custom IAM roles and remove unnecessary permissions.
-- Detect unusual IAM enumeration and Service Account administration activities through Cloud Audit Logs.
+- Apply the Principle of Least Privilege.
+- Reduce IAM visibility granted to low-privileged identities.
+- Regularly audit custom roles.
+- Restrict Storage Bucket access using IAM Conditions where appropriate.
+- Review Service Account administration permissions.
+- Continuously monitor IAM policy changes using Cloud Audit Logs.
+
+---
+
+# Automation
+
+The challenge can also be automated using Rhino Security Labs' GCP IAM Privilege Escalation Scanner.
+
+Useful scripts include:
+
+```text
+enumerate_member_permissions.py
+
+check_for_privesc.py
+```
+
+These scripts enumerate permissions and automatically identify known privilege escalation paths.
 
 ---
 
 # Key Takeaways
 
-- Cloud privilege escalation often begins with **enumeration**, not exploitation.
-- Service Account IAM policies are as important as project-level IAM bindings.
-- Custom roles should always be inspected to understand the actual permissions they grant.
-- Mapping trust relationships between Service Accounts is a fundamental Red Team technique in GCP.
-- Not every challenge ends with obtaining administrator access; identifying a viable privilege escalation path is often the intended objective.
+- IAM enumeration is often more valuable than immediate exploitation.
+- Custom roles should be reviewed as carefully as predefined roles.
+- IAM Conditions can significantly reduce the blast radius of permissions.
+- Mapping relationships between Service Accounts is essential during cloud assessments.
+- Privilege escalation opportunities frequently arise from delegated administrative permissions rather than overly permissive identities.
 
 ---
 
 # References
 
-- https://cloud.google.com/iam/docs
-- https://cloud.google.com/iam/docs/service-account-overview
-- https://cloud.google.com/storage/docs/access-control/iam
-- https://cloud.google.com/sdk/gcloud
+- Google Cloud IAM Documentation
+- Google Cloud Service Accounts Documentation
+- Google Cloud Storage IAM Documentation
+- Rhino Security Labs - GCP IAM Privilege Escalation Scanner
