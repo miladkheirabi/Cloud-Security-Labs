@@ -73,6 +73,3 @@ Examples:
 # Goal
 
 Build a personal Cloud Security investigation knowledge base by documenting real-world security scenarios and the process used to analyze them.
-
-```
-```
