@@ -1,4 +1,4 @@
-# AWS Cognito Public User Registration & Verification Email Discovery.md
+# AWS Cognito Public User Registration & Verification Email Discovery
 
 ## Challenge Overview
 
@@ -34,9 +34,7 @@ AWS
 
 ## Initial Access
 
-The challenge initially provided a public S3 static website:
-
-http://aws-security-cognito-01-s3-website.ap-south-1.amazonaws.com
+The challenge initially provided a public S3 static website.
 
 The website contained a Job Portal Login button.
 
@@ -44,7 +42,9 @@ Clicking the login button redirected to an AWS Cognito Hosted UI.
 
 The Cognito authorization URL exposed the following Client ID:
 
+```
 6h6b6gvm11k0eis3l4vhkhgi67
+```
 
 No valid AWS IAM credentials were required to register a user through the Cognito App Client.
 
@@ -52,8 +52,6 @@ No valid AWS IAM credentials were required to register a user through the Cognit
 
 * Web Browser
 * AWS CLI
-* curl
-* Burp Suite
 
 ---
 
@@ -91,16 +89,16 @@ The provided challenge URL was accessed through a web browser.
 
 The website contained a Job Portal Login button. Clicking it redirected the browser to an AWS Cognito Hosted UI.
 
-The resulting URL contained the following Client ID:
-
-```
-6h6b6gvm11k0eis3l4vhkhgi67
-```
-
 The Cognito login URL was:
 
 ```
 https://a-ws-security-cog-nito-01.auth.ap-south-1.amazoncognito.com/login?client_id=6h6b6gvm11k0eis3l4vhkhgi67&response_type=code&scope=email+openid&redirect_uri=https%3A%2F%2Finfinity.cyberwarfare.live
+```
+
+The resulting URL contained the following Client ID:
+
+```
+6h6b6gvm11k0eis3l4vhkhgi67
 ```
 
 ### Observation
@@ -121,7 +119,7 @@ The AWS CLI was used with the discovered Client ID.
 
 ### Command
 
-```
+```aws
     aws cognito-idp sign-up --client-id '<CLIENT_ID>' --username '<USERNAME>' --password '<PASSWORD>' --user-attributes '[{"Name":"email","Value":"<EMAIL_ADDRESS>"}]' --region ap-south-1
 ```
 
@@ -155,7 +153,7 @@ The goal was to trigger the Cognito verification-code email and inspect the dest
 
 The registration request included an email attribute:
 
-```
+```aws
     [{"Name":"email","Value":"<EMAIL_ADDRESS>"}]
 ```
 
@@ -209,16 +207,6 @@ The email address shown in the To field was the required challenge flag.
 
 ---
 
-# Findings
-
-## Security Weakness
-
-The Cognito App Client allowed unauthenticated users to register new accounts.
-
-The Client ID was publicly exposed through the Cognito Hosted UI URL, and the corresponding App Client permitted the SignUp operation without requiring AWS IAM authentication.
-
-This allowed an attacker to directly interact with the Cognito registration API using the AWS CLI.
-
 ## Impact
 
 An attacker could:
@@ -238,13 +226,13 @@ In this challenge, the verification email exposed the email address used by Secu
 The Cognito Hosted UI exposed the following Client ID:
 
 ```
-    6h6b6gvm11k0eis3l4vhkhgi67
+6h6b6gvm11k0eis3l4vhkhgi67
 ```
 
 The registration was performed using:
 
-```
-    aws cognito-idp sign-up --client-id '<CLIENT_ID>' --username '<USERNAME>' --password '<PASSWORD>' --user-attributes '[{"Name":"email","Value":"<EMAIL_ADDRESS>"}]' --region ap-south-1
+```aws
+aws cognito-idp sign-up --client-id '<CLIENT_ID>' --username '<USERNAME>' --password '<PASSWORD>' --user-attributes '[{"Name":"email","Value":"<EMAIL_ADDRESS>"}]' --region ap-south-1
 ```
 
 The resulting verification email contained the target email address in the To field.
