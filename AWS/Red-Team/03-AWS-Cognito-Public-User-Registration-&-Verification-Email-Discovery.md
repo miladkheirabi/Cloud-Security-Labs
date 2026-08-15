@@ -63,7 +63,7 @@ The challenge description specifically mentioned AWS CLI and Cognito.
 
 After following the Job Portal Login functionality, the application redirected to the Cognito Hosted UI. The resulting URL contained a client_id parameter.
 
-The important clue was that the Cognito Hosted UI also exposed a Sign up option.
+The challenge description explicitly referenced AWS CLI and Cognito. After discovering the App Client ID, the next step was to test whether the Cognito SignUp API was accessible using only the public Client ID.
 
 This suggested that the Cognito App Client might allow unauthenticated user registration and that the same functionality could potentially be accessed directly through the AWS CLI.
 
@@ -151,7 +151,7 @@ The registration request was accepted by Cognito and the user-verification workf
 
 The goal was to trigger the Cognito verification-code email and inspect the destination address.
 
-The registration request included an email attribute:
+The challenge solution demonstrated that the Cognito SignUp API accepts the standard Cognito user attribute email, which was used to receive the verification message:
 
 ```aws
 [{"Name":"email","Value":"<EMAIL_ADDRESS>"}]
