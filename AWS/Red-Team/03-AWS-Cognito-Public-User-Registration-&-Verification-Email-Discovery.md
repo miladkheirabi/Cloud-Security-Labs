@@ -120,7 +120,7 @@ The AWS CLI was used with the discovered Client ID.
 ### Command
 
 ```aws
-    aws cognito-idp sign-up --client-id '<CLIENT_ID>' --username '<USERNAME>' --password '<PASSWORD>' --user-attributes '[{"Name":"email","Value":"<EMAIL_ADDRESS>"}]' --region ap-south-1
+aws cognito-idp sign-up --client-id '<CLIENT_ID>' --username '<USERNAME>' --password '<PASSWORD>' --user-attributes '[{"Name":"email","Value":"<EMAIL_ADDRESS>"}]' --region ap-south-1
 ```
 
 The important parameters were:
@@ -154,7 +154,7 @@ The goal was to trigger the Cognito verification-code email and inspect the dest
 The registration request included an email attribute:
 
 ```aws
-    [{"Name":"email","Value":"<EMAIL_ADDRESS>"}]
+[{"Name":"email","Value":"<EMAIL_ADDRESS>"}]
 ```
 
 After the account was registered, Cognito sent a verification email.
