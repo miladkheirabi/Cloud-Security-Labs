@@ -46,9 +46,9 @@ Access was provided through:
 
 The credentials authenticated as:
 
-```
-arn:aws:iam::058264439561:user/frontend-developer
-```
+
+    arn:aws:iam::058264439561:user/frontend-developer
+
 
 ## Available Tools
 
@@ -84,11 +84,11 @@ Configure the AWS CLI and verify the authenticated identity.
 
 Command:
 
-```
+
     aws configure
 
     aws sts get-caller-identity
-```
+
 Result:
 
     {
